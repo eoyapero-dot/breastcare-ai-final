@@ -1,0 +1,33 @@
+# v0 runtime files (should only exist in preview, not in git)
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+instrumentation-client.js
+instrumentation-client.ts
+
+# Common ignores
+node_modules/
+.next/
+.env*.local
+.DS_Store
+# Dependencies
+node_modules/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+
+# Large AI Models (GitHub blocks files over 100MB)
+*.pkl
+*.h5
+*.model
+
+# Uploaded Images
+uploads/
+backend/uploads/
+
+# Environment variables
+.env
+.env.local
