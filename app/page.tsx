@@ -18,7 +18,6 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
-import { Separator } from "@/components/ui/separator"
 
 // Import your components
 import { PatientIntake } from "@/components/dashboard/patient-intake"
@@ -40,35 +39,38 @@ export default function DashboardPage() {
 
   // --- FETCH REAL DATA FROM DATABASE ---
   React.useEffect(() => {
-    // We only fetch if we are looking at the overview to save performance
     if (activeView === "overview") {
-      fetch("http://127.0.0.1:5000/patients")
+      // Added timestamp to bust browser cache
+      fetch(`http://127.0.0.1:5000/patients?t=${new Date().getTime()}`, { cache: 'no-store' })
         .then(res => res.json())
         .then(data => {
           if (data.risk) {
             const patients = data.risk
             
-            // 1. Calculate Stats
-            const highRiskCount = patients.filter((p: any) => p.risk_level === 'High').length
-            const midRiskCount = patients.filter((p: any) => p.risk_level === 'Moderate').length
-            const lowRiskCount = patients.filter((p: any) => p.risk_level === 'Low').length
+            // 1. Calculate Stats (Using bulletproof risk checks)
+            const highRiskCount = patients.filter((p: any) => String(p.risk_score || p.risk_level).includes('High')).length
+            const midRiskCount = patients.filter((p: any) => String(p.risk_score || p.risk_level).includes('Moderate')).length
+            const lowRiskCount = patients.filter((p: any) => String(p.risk_score || p.risk_level).includes('Low')).length
             
             // Check for patients added TODAY
             const todayStr = new Date().toISOString().split('T')[0]
-            const todayCount = patients.filter((p: any) => p.prediction_date && p.prediction_date.startsWith(todayStr)).length
+            const todayCount = patients.filter((p: any) => {
+               const dateStr = p.created_at || p.prediction_date;
+               return dateStr && dateStr.startsWith(todayStr);
+            }).length
 
             setStats({
               total: patients.length,
               highRisk: highRiskCount,
               today: todayCount, 
-              avgTime: "4.2 days" // This usually requires a separate 'appointment' table, so we keep it static or random
+              avgTime: "4.2 days" 
             })
 
             // 2. Set Recent List (Top 5)
             setRecentPatients(patients.slice(0, 5))
 
             // 3. Calculate Distribution Percentages
-            const total = patients.length || 1 // Avoid divide by zero
+            const total = patients.length || 1 
             setRiskDistribution({
               high: (highRiskCount / total) * 100,
               mid: (midRiskCount / total) * 100,
@@ -146,27 +148,36 @@ export default function DashboardPage() {
                     {recentPatients.length === 0 ? (
                        <p className="text-sm text-muted-foreground">No records found in database.</p>
                     ) : (
-                      recentPatients.map((patient: any) => (
-                        <div key={patient.id} className="flex items-center justify-between">
-                          <div className="space-y-1">
-                            <p className="text-sm font-medium leading-none">{patient.full_name}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {patient.location} • {patient.age} yrs
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            <div className="w-24 sm:w-32">
-                              <Progress 
-                                value={patient.risk_score} 
-                                className={patient.risk_level === 'High' ? "h-2 bg-red-100" : "h-2 bg-blue-100"} 
-                              />
+                      recentPatients.map((patient: any, index) => {
+                        // BULLETPROOF VARIABLES
+                        const pName = patient.patient_name || patient.full_name || "Unknown Patient";
+                        const pStage = patient.tumor_stage || patient.location || "Stage N/A";
+                        const pAge = patient.diagnosis_age || patient.age;
+                        const pRisk = patient.risk_score || patient.risk_level || "Pending";
+                        const isHighRisk = String(pRisk).includes("High");
+
+                        return (
+                          <div key={patient.patient_id || index} className="flex items-center justify-between">
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium leading-none">{pName}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {pStage} • {pAge ? `${pAge} yrs` : "Age N/A"}
+                              </p>
                             </div>
-                            <Badge variant={patient.risk_level === 'High' ? 'destructive' : 'secondary'}>
-                              {patient.risk_level}
-                            </Badge>
+                            <div className="flex items-center gap-4">
+                              <div className="w-24 sm:w-32">
+                                <Progress 
+                                  value={isHighRisk ? 85 : 20} 
+                                  className={isHighRisk ? "h-2 bg-red-100 [&>div]:bg-red-500" : "h-2 bg-blue-100 [&>div]:bg-blue-500"} 
+                                />
+                              </div>
+                              <Badge variant={isHighRisk ? 'destructive' : 'secondary'}>
+                                {pRisk}
+                              </Badge>
+                            </div>
                           </div>
-                        </div>
-                      ))
+                        )
+                      })
                     )}
                   </div>
                 </CardContent>
@@ -199,7 +210,7 @@ export default function DashboardPage() {
                       <span className="text-muted-foreground">High Risk (61-100%)</span>
                       <span className="font-bold">{Math.round(riskDistribution.high)}%</span>
                     </div>
-                    <Progress value={riskDistribution.high} className="h-2" />
+                    <Progress value={riskDistribution.high} className="h-2 [&>div]:bg-destructive" />
                   </div>
                 </CardContent>
               </Card>
@@ -218,7 +229,7 @@ export default function DashboardPage() {
   return (
     <div className="flex min-h-screen flex-col">
       <div className="flex flex-1">
-        {/* SIDEBAR */}
+        {/* SIDEBAR - REVERTED TO ORIGINAL BG AND CLASSES */}
         <aside className="hidden w-[240px] flex-col border-r bg-muted/10 md:flex">
           <div className="flex h-14 items-center border-b px-6 font-semibold lg:h-[60px]">
             <Activity className="mr-2 h-6 w-6 text-primary" />
@@ -230,6 +241,7 @@ export default function DashboardPage() {
                 Navigation
               </div>
               
+              {/* REVERTED LABELS */}
               <Button 
                 variant={activeView === "overview" ? "secondary" : "ghost"} 
                 className="justify-start gap-2" 
@@ -285,7 +297,7 @@ export default function DashboardPage() {
           </ScrollArea>
         </aside>
 
-        {/* MAIN CONTENT */}
+        {/* MAIN CONTENT - REVERTED TO ORIGINAL BG */}
         <main className="flex flex-1 flex-col gap-4 p-4 lg:gap-6 lg:p-6 bg-muted/5">
           <div className="flex items-center">
             <h1 className="text-lg font-semibold md:text-2xl capitalize">

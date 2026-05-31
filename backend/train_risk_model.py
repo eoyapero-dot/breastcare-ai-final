@@ -1,52 +1,73 @@
 import pandas as pd
 import numpy as np
-import joblib
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+import joblib
 
-# 1. GENERATE DATA (10 Features)
-print("📊 Generating comprehensive patient dataset...")
-np.random.seed(42)
-n_samples = 2000
+# 1. Load the dataset
+df = pd.read_csv('brca_tcga_clinical_data (1).tsv', sep='\t')
 
-data = pd.DataFrame({
-    'age': np.random.randint(18, 90, n_samples),
-    'location': np.random.choice([0, 1], n_samples), # 0=Urban, 1=Rural
-    'parity': np.random.randint(0, 8, n_samples),
-    'history': np.random.choice([0, 1], n_samples, p=[0.75, 0.25]),
-    'comorbidities': np.random.randint(0, 4, n_samples),
-    'education': np.random.choice([0, 1, 2, 3], n_samples),
-    'employment': np.random.choice([0, 1, 2, 3], n_samples),
-    'insurance': np.random.choice([0, 1, 2], n_samples),
-    'distance': np.random.choice([0, 1, 2, 3], n_samples),
-    'transport': np.random.choice([0, 1, 2, 3], n_samples),
-})
+# 2. Select ALL Comprehensive Features
+features = [
+    'Diagnosis Age', 
+    'Menopause Status', 
+    'Neoplasm Disease Stage American Joint Committee on Cancer Code',
+    'ER Status By IHC', 
+    'PR status by ihc', 
+    'HER2 fish status',
+    'Neoplasm Histologic Type Name',
+    'Race Category',
+    'Prior Cancer Diagnosis Occurence',
+    'Disease Surgical Margin Status',
+    'Lymph Node(s) Examined Number'
+]
+target = 'Overall Survival Status'
 
-# 2. DEFINE RISK RULES (Simulation)
-def calculate_risk(row):
-    score = 0
-    if row['location'] == 1: score += 2
-    if row['distance'] >= 2: score += 2
-    if row['insurance'] == 0: score += 2
-    if row['age'] > 60: score += 1
-    score += np.random.normal(0, 1.5)
-    return 1 if score > 4.5 else 0
+# Filter and clean target
+data = df[features + [target]].copy()
+data = data.dropna(subset=[target])
+data[target] = data[target].apply(lambda x: 1 if 'DECEASED' in str(x).upper() else 0)
 
-data['delayed_diagnosis'] = data.apply(calculate_risk, axis=1)
+X = data[features]
+y = data[target]
 
-# 3. TRAIN
-X = data.drop('delayed_diagnosis', axis=1)
-y = data['delayed_diagnosis']
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+# 3. Build the Preprocessing Pipeline for all features
+numeric_features = ['Diagnosis Age', 'Lymph Node(s) Examined Number']
+numeric_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='median')),
+    ('scaler', StandardScaler())
+])
 
-model = RandomForestClassifier()
-print("🚀 Training Model...")
-model.fit(X_train, y_train)
+categorical_features = [
+    'Menopause Status', 'Neoplasm Disease Stage American Joint Committee on Cancer Code',
+    'ER Status By IHC', 'PR status by ihc', 'HER2 fish status', 
+    'Neoplasm Histologic Type Name', 'Race Category', 
+    'Prior Cancer Diagnosis Occurence', 'Disease Surgical Margin Status'
+]
+categorical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('onehot', OneHotEncoder(handle_unknown='ignore'))
+])
 
-# 4. SAVE
-joblib.dump(model, 'risk_model.pkl')
-print(f"✅ Model saved as 'risk_model.pkl' with accuracy: {accuracy_score(y_test, model.predict(X_test)):.2f}")
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', numeric_transformer, numeric_features),
+        ('cat', categorical_transformer, categorical_features)
+    ])
+
+# 4. Create and Train the Model
+rf_model = Pipeline(steps=[
+    ('preprocessor', preprocessor),
+    ('classifier', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'))
+])
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+rf_model.fit(X_train, y_train)
+
+# 5. Save the comprehensive model
+joblib.dump(rf_model, 'risk_model_pipeline.pkl')
+print("Comprehensive model retrained and saved successfully!")

@@ -3,6 +3,7 @@ from flask_cors import CORS
 import joblib
 import os
 import numpy as np
+import pandas as pd # Required for the new Scikit-Learn Pipeline
 from PIL import Image
 import mysql.connector
 import time
@@ -19,16 +20,17 @@ def get_db_connection():
     return mysql.connector.connect(
         host="localhost",
         user="root",
-        password="",
+        password="", # Update if you have a password in XAMPP
         database="breast_cancer_db"
     )
 
 # --- LOAD AI MODELS ---
 try:
-    risk_model = joblib.load('risk_model.pkl')
-    print("✅ Risk Model loaded.")
-except:
-    print("⚠️ Risk Model missing (Using simulation).")
+    # Changed to the new pipeline model
+    risk_model = joblib.load('risk_model_pipeline.pkl')
+    print("✅ Comprehensive Risk Model Pipeline loaded.")
+except Exception as e:
+    print(f"⚠️ Risk Model missing or error: {e} (Using simulation).")
     risk_model = None
 
 try:
@@ -41,56 +43,76 @@ except:
 
 @app.route('/')
 def home():
-    return "BreastCare AI System - All Systems Operational"
+    return "BreastCare AI System - TCGA Integrated - All Systems Operational"
 
 # ==========================================
-# FEATURE 1: RISK ASSESSMENT
+# FEATURE 1: RISK ASSESSMENT (COMPREHENSIVE)
 # ==========================================
 @app.route('/predict_risk', methods=['POST'])
 def predict_risk():
     try:
         data = request.json
-        features = [
-            int(data.get('age', 0)),
-            1 if data.get('location') == 'Rural' else 0,
-            int(data.get('parity', 0)),
-            1 if data.get('history') else 0,
-            len(data.get('comorbidities', [])),
-            {'none': 0, 'primary': 1, 'secondary': 2, 'tertiary': 3}.get(data.get('educationLevel', 'none'), 0),
-            {'unemployed': 0, 'informal': 1, 'employed': 2, 'retired': 3}.get(data.get('employmentStatus', 'unemployed'), 0),
-            {'none': 0, 'public': 1, 'private': 2}.get(data.get('insuranceStatus', 'none'), 0),
-            {'0-10': 0, '11-30': 1, '31-50': 2, '50+': 3}.get(data.get('distanceToClinic', '0-10'), 0),
-            {'none': 0, 'limited': 1, 'public': 2, 'own': 3}.get(data.get('transportAccess', 'public'), 0),
-        ]
+        
+        # 1. Format for ML Pipeline (Mapping frontend JSON to exact TSV Training columns)
+        df_input = pd.DataFrame({
+            'Diagnosis Age': [int(data.get('diagnosis_age', 50))],
+            'Menopause Status': [data.get('menopause_status', 'Post')],
+            'Neoplasm Disease Stage American Joint Committee on Cancer Code': [data.get('tumor_stage', 'Stage IIA')],
+            'ER Status By IHC': [data.get('er_status', 'Positive')],
+            'PR status by ihc': [data.get('pr_status', 'Positive')],
+            'HER2 fish status': [data.get('her2_status', 'Negative')],
+            'Neoplasm Histologic Type Name': [data.get('histology_type', 'Infiltrating Ductal Carcinoma')],
+            'Race Category': [data.get('race_category', 'WHITE')],
+            'Prior Cancer Diagnosis Occurence': [data.get('prior_cancer', 'No')],
+            'Disease Surgical Margin Status': [data.get('margin_status', 'Negative')],
+            'Lymph Node(s) Examined Number': [int(data.get('lymph_nodes_examined', 0))]
+        })
 
+        # 2. Get Prediction
         if risk_model:
-            probability = risk_model.predict_proba([features])[0][1]
+            prediction = risk_model.predict(df_input)[0]
+            probability = risk_model.predict_proba(df_input)[0][1]
         else:
-            probability = 0.15 # Fallback
+            prediction = 1
+            probability = 0.85 # Fallback simulation
 
-        result = {
-            "risk_score": round(probability * 100, 1),
-            "risk_level": "High" if probability > 0.7 else "Moderate" if probability > 0.4 else "Low"
-        }
+        risk_level = "High Risk" if prediction == 1 else "Low Risk"
 
-        # Save to DB
+        # 3. Save to the NEW patients table
         conn = get_db_connection()
         cursor = conn.cursor()
-        sql = "INSERT INTO patient_records (full_name, age, location, risk_score, risk_level) VALUES (%s, %s, %s, %s, %s)"
+        sql = """INSERT INTO patients 
+                 (patient_name, diagnosis_age, race_category, menopause_status, prior_cancer, 
+                  histology_type, tumor_stage, er_status, pr_status, her2_status, margin_status, 
+                  lymph_nodes_examined, risk_score) 
+                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
         val = (
-            f"{data.get('firstName', 'Unknown')} {data.get('lastName', '')}",
-            data.get('age', 0),
-            "Rural" if data.get('location') == 'Rural' else "Urban",
-            result['risk_score'],
-            result['risk_level']
+            data.get('name', 'Unknown Patient'),
+            data.get('diagnosis_age', 50),
+            data.get('race_category', 'WHITE'),
+            data.get('menopause_status', 'Post'),
+            data.get('prior_cancer', 'No'),
+            data.get('histology_type', 'Infiltrating Ductal Carcinoma'),
+            data.get('tumor_stage', 'Stage IIA'),
+            data.get('er_status', 'Positive'),
+            data.get('pr_status', 'Positive'),
+            data.get('her2_status', 'Negative'),
+            data.get('margin_status', 'Negative'),
+            data.get('lymph_nodes_examined', 0),
+            risk_level
         )
         cursor.execute(sql, val)
         conn.commit()
         conn.close()
         
-        return jsonify(result)
+        return jsonify({
+            "status": "success", 
+            "risk_score": risk_level, 
+            "risk_probability": round(probability * 100, 1)
+        })
 
     except Exception as e:
+        print(f"Error in predict_risk: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # ==========================================
@@ -123,12 +145,12 @@ def upload_image():
     else:
         # Simulation
         time.sleep(1)
-        result = "Simulated Result"
+        result = "Malignant"
         confidence = 94.5
 
     return jsonify({
         "prediction": result,
-        "confidence": f"{confidence}%",
+        "confidence": confidence, # Passing as raw float to DB
         "filename": filename
     })
 
@@ -138,12 +160,20 @@ def save_imaging():
         data = request.json
         conn = get_db_connection()
         cursor = conn.cursor()
-        query = "INSERT INTO imaging_records (filename, prediction, confidence) VALUES (%s, %s, %s)"
-        cursor.execute(query, (data.get('filename', 'unknown.jpg'), data['prediction'], data['confidence']))
+        
+        # Updated to match new `imaging_logs` table schema
+        query = "INSERT INTO imaging_logs (image_path, ai_prediction_result, confidence_score) VALUES (%s, %s, %s)"
+        
+        # Clean the confidence score in case the frontend sends a string like "94.5%"
+        conf_str = str(data.get('confidence', '0')).replace('%', '')
+        confidence_score = float(conf_str)
+        
+        cursor.execute(query, (data.get('filename', 'unknown.jpg'), data.get('prediction'), confidence_score))
         conn.commit()
         conn.close()
         return jsonify({"message": "Saved successfully!"})
     except Exception as e:
+        print(f"Error in save_imaging: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # ==========================================
@@ -155,15 +185,17 @@ def get_patients():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         
-        cursor.execute("SELECT * FROM patient_records ORDER BY prediction_date DESC")
+        # Updated to query the new table names and proper timestamp column
+        cursor.execute("SELECT * FROM patients ORDER BY created_at DESC")
         risk_records = cursor.fetchall()
         
-        cursor.execute("SELECT * FROM imaging_records ORDER BY scan_date DESC")
+        cursor.execute("SELECT * FROM imaging_logs ORDER BY uploaded_at DESC")
         imaging_records = cursor.fetchall()
         
         conn.close()
         return jsonify({"risk": risk_records, "imaging": imaging_records})
     except Exception as e:
+        print(f"Error in get_patients: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # ==========================================
